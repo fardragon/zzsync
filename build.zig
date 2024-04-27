@@ -4,34 +4,175 @@ const std = @import("std");
 // declaratively construct a build graph that will be executed by an external
 // runner.
 pub fn build(b: *std.Build) void {
-    // Standard target options allows the person running `zig build` to choose
-    // what target to build for. Here we do not override the defaults, which
-    // means any target is allowed, and the default is native. Other options
-    // for restricting supported target set are available.
     const target = b.standardTargetOptions(.{});
-
-    // Standard optimization options allow the person running `zig build` to select
-    // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall. Here we do not
-    // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
-    const exe = b.addExecutable(.{
-        .name = "zzsync",
+    const config = b.addConfigHeader(
+        .{
+            .style = .blank,
+            .include_path = "config.h",
+        },
+        .{
+            .HAVE_FSEEKO = 1,
+            .HAVE_GETADDRINFO = 1,
+            .HAVE_INTTYPES_H = 1,
+            .HAVE_LIBSOCKET = 1,
+            .HAVE_MEMCPY = 1,
+            .HAVE_MEMORY_H = 1,
+            .HAVE_MKSTEMP = 1,
+            .HAVE_PREAD = 1,
+            .HAVE_PWRITE = 1,
+            .HAVE_STDINT_H = 1,
+            .HAVE_STDLIB_H = 1,
+            .HAVE_STRINGS_H = 1,
+            .HAVE_STRING_H = 1,
+            .HAVE_SYS_STAT_H = 1,
+            .HAVE_SYS_TYPES_H = 1,
+            .HAVE_UNISTD_H = 1,
+            .H_ERRNO_DECLARED = 1,
+            .PACKAGE = "zsync",
+            .PACKAGE_BUGREPORT = "http://zsync.moria.org.uk/",
+            .PACKAGE_NAME = "zsync",
+            .PACKAGE_STRING = "zsync 0.6.2",
+            .PACKAGE_TARNAME = "zsync",
+            .PACKAGE_URL = "",
+            .PACKAGE_VERSION = "0.6.2",
+            .SIZEOF_OFF_T = 8,
+            .SIZEOF_SIZE_T = 8,
+            .STDC_HEADERS = 1,
+            .VERSION = "0.6.2",
+            ._XOPEN_SOURCE = 600,
+            ._BSD_SOURCE = 1,
+        },
+    );
+
+    const librcksum = b.addStaticLibrary(.{
+        .name = "librcksum",
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
     });
 
-    exe.addCSourceFile(.{ .file = "client.c" });
+    librcksum.addCSourceFiles(.{
+        .files = &[_][]const u8{
+            "librcksum/state.c",
+            "librcksum/hash.c",
+            "librcksum/range.c",
+            "librcksum/rsum.c",
+            "librcksum/md4.c",
+        },
+        .flags = &.{
+            "-std=c11",
+            "-DHAVE_CONFIG_H",
+        },
+    });
 
-    // This declares intent for the executable to be installed into the
-    // standard location when the user invokes the "install" step (the default
-    // step when running `zig build`).
-    b.installArtifact(exe);
+    librcksum.addIncludePath(.{ .path = "./" });
+    librcksum.addConfigHeader(config);
+
+    const zlib = b.addStaticLibrary(.{
+        .name = "zlib",
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+
+    zlib.addCSourceFiles(.{
+        .files = &[_][]const u8{
+            "zlib/inflate.c",
+            "zlib/zutil.c",
+            "zlib/crc32.c",
+            "zlib/adler32.c",
+            "zlib/inftrees.c",
+            "zlib/deflate.c",
+            "zlib/trees.c",
+            "zlib/compress.c",
+        },
+        .flags = &.{
+            "-std=c11",
+        },
+    });
+
+    const libzsync = b.addStaticLibrary(.{
+        .name = "libzsync",
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+
+    libzsync.addCSourceFiles(.{
+        .files = &[_][]const u8{
+            "libzsync/zsync.c",
+            "libzsync/zmap.c",
+            "libzsync/sha1.c",
+        },
+        .flags = &.{
+            "-std=c11",
+            "-DHAVE_CONFIG_H",
+        },
+    });
+
+    libzsync.addIncludePath(.{ .path = "./" });
+    libzsync.addConfigHeader(config);
+
+    libzsync.linkLibrary(zlib);
+    libzsync.linkLibrary(librcksum);
+
+    const zzsync = b.addExecutable(.{
+        .name = "zsync",
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+
+    zzsync.addCSourceFiles(.{
+        .files = &[_][]const u8{
+            "client.c",
+            "progress.c",
+            "url.c",
+            "http.c",
+            "base64.c",
+        },
+        .flags = &.{
+            "-std=c11",
+            "-DHAVE_CONFIG_H",
+        },
+    });
+
+    zzsync.addConfigHeader(config);
+    zzsync.linkLibrary(libzsync);
+
+    const zsyncmake = b.addExecutable(.{
+        .name = "zsyncmake",
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+
+    zsyncmake.addCSourceFiles(.{
+        .files = &[_][]const u8{
+            "make.c",
+            "makegz.c",
+            "progress.c",
+        },
+        .flags = &.{
+            "-std=c11",
+            "-DHAVE_CONFIG_H",
+        },
+    });
+    zsyncmake.addIncludePath(.{ .path = "./" });
+    zsyncmake.addConfigHeader(config);
+
+    zsyncmake.linkLibrary(zlib);
+    zsyncmake.linkLibrary(libzsync);
+
+    b.installArtifact(zzsync);
+    b.installArtifact(zsyncmake);
 
     // This *creates* a Run step in the build graph, to be executed when another
     // step is evaluated that depends on it. The next line below will establish
     // such a dependency.
-    const run_cmd = b.addRunArtifact(exe);
+    const run_cmd = b.addRunArtifact(zzsync);
 
     // By making the run step depend on the install step, it will be run from the
     // installation directory rather than directly from within the cache directory.
