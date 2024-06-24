@@ -67,7 +67,7 @@ pub fn build(b: *std.Build) void {
         },
     });
 
-    librcksum.addIncludePath(.{ .path = "./" });
+    librcksum.addIncludePath(b.path("./"));
     librcksum.addConfigHeader(config);
 
     const zlib = b.addStaticLibrary(.{
@@ -112,11 +112,19 @@ pub fn build(b: *std.Build) void {
         },
     });
 
-    libzsync.addIncludePath(.{ .path = "./" });
+    libzsync.addIncludePath(b.path("./"));
     libzsync.addConfigHeader(config);
 
     libzsync.linkLibrary(zlib);
     libzsync.linkLibrary(librcksum);
+
+    const zzsync_util = b.addStaticLibrary(.{
+        .name = "zzsync_util",
+        .target = target,
+        .optimize = optimize,
+        .root_source_file = b.path("src/util.zig"),
+        .link_libc = true,
+    });
 
     const zzsync = b.addExecutable(.{
         .name = "zsync",
@@ -130,17 +138,18 @@ pub fn build(b: *std.Build) void {
             "client.c",
             "progress.c",
             "url.c",
-            "http.c",
-            "base64.c",
         },
         .flags = &.{
             "-std=c11",
             "-DHAVE_CONFIG_H",
+            "-fno-sanitize=undefined",
         },
     });
+    zzsync.addIncludePath(b.path("src/zig_headers/"));
 
     zzsync.addConfigHeader(config);
     zzsync.linkLibrary(libzsync);
+    zzsync.linkLibrary(zzsync_util);
 
     const zsyncmake = b.addExecutable(.{
         .name = "zsyncmake",
@@ -160,11 +169,14 @@ pub fn build(b: *std.Build) void {
             "-DHAVE_CONFIG_H",
         },
     });
-    zsyncmake.addIncludePath(.{ .path = "./" });
+    zsyncmake.addIncludePath(b.path("./"));
+    zsyncmake.addIncludePath(b.path("stc/zig_headers"));
+
     zsyncmake.addConfigHeader(config);
 
     zsyncmake.linkLibrary(zlib);
     zsyncmake.linkLibrary(libzsync);
+    zsyncmake.linkLibrary(zzsync_util);
 
     b.installArtifact(zzsync);
     b.installArtifact(zsyncmake);
