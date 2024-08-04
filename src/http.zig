@@ -2,17 +2,13 @@ const std = @import("std");
 const common = @import("common.zig");
 
 // FILE* http_get(const char* orig_url, char** track_referer, const char* tfname);
-pub export fn http_get(orig_url: common.ConstCString, track_referer: [*c]common.CString, tfname: common.ConstCString) [*c]common.c.FILE {
+pub fn http_get(allocator: std.mem.Allocator, orig_url: [:0]const u8, tfname: ?[]const u8) struct { [*c]common.c.FILE, []u8 } {
     // TODO: Allow using local .zsync file
     // TODO: Add proxy handling
     // TODO: Add auth handling
     _ = tfname;
 
-    const raw_url = std.mem.span(orig_url);
-
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const allocator = gpa.allocator();
-    defer _ = gpa.deinit();
+    const raw_url: []const u8 = orig_url[0..orig_url.len];
 
     var client = std.http.Client{
         .allocator = allocator,
@@ -32,12 +28,8 @@ pub export fn http_get(orig_url: common.ConstCString, track_referer: [*c]common.
         },
     ) catch |err| {
         std.debug.print("{}\n", .{err});
-        return null;
+        unreachable;
     };
-
-    if (track_referer != null) {
-        track_referer.* = common.c.strdup(orig_url);
-    }
 
     _ = result;
 
@@ -45,5 +37,5 @@ pub export fn http_get(orig_url: common.ConstCString, track_referer: [*c]common.
     _ = common.c.fwrite(result_buffer.items.ptr, 1, result_buffer.items.len, output_file);
     _ = common.c.rewind(output_file);
 
-    return output_file;
+    return .{ output_file, allocator.dupe(u8, raw_url) catch unreachable };
 }

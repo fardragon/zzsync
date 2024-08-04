@@ -125,17 +125,20 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/util.zig"),
         .link_libc = true,
     });
+    zzsync_util.addIncludePath(b.path("libzsync"));
+
+    const yazap = b.dependency("yazap", .{});
 
     const zzsync = b.addExecutable(.{
         .name = "zsync",
         .target = target,
         .optimize = optimize,
+        .root_source_file = b.path("src/client.zig"),
         .link_libc = true,
     });
 
     zzsync.addCSourceFiles(.{
         .files = &[_][]const u8{
-            "client.c",
             "progress.c",
             "url.c",
         },
@@ -146,6 +149,9 @@ pub fn build(b: *std.Build) void {
         },
     });
     zzsync.addIncludePath(b.path("src/zig_headers/"));
+    zzsync.addIncludePath(b.path("libzsync"));
+
+    zzsync.root_module.addImport("yazap", yazap.module("yazap"));
 
     zzsync.addConfigHeader(config);
     zzsync.linkLibrary(libzsync);

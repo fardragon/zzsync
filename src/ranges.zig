@@ -76,7 +76,7 @@ const RangeFetchResult = struct {
 const range_fetch = anyopaque;
 
 // struct range_fetch;
-const RangeFetch = struct {
+pub const RangeFetch = struct {
     const Self = @This();
     allocator: std.mem.Allocator,
 
@@ -93,7 +93,7 @@ const RangeFetch = struct {
     offset_in_buffer: usize = 0,
     downloaded_bytes: usize = 0,
 
-    fn init(allocator: std.mem.Allocator, url: []const u8) !Self {
+    pub fn init(allocator: std.mem.Allocator, url: []const u8) !Self {
         const url_dup = try allocator.dupe(u8, url);
         const uri = try std.Uri.parse(url_dup);
 
@@ -116,7 +116,7 @@ const RangeFetch = struct {
         // }
     }
 
-    fn deinit(self: *Self) void {
+    pub fn deinit(self: *Self) void {
         self.client.deinit();
         self.ranges_todo.deinit();
         self.buffer.deinit();
@@ -308,7 +308,7 @@ const RangeFetch = struct {
         return .{ read_offset, data_to_read };
     }
 
-    fn addRanges(self: *Self, ranges: []c_long) !void {
+    pub fn addRanges(self: *Self, ranges: []c_long) !void {
         for (0..(ranges.len / 2)) |i| {
             try self.ranges_todo.append(Range{
                 .start = @intCast(ranges[2 * i]),
@@ -333,16 +333,6 @@ pub export fn range_fetch_start(orig_url: common.ConstCString) ?*range_fetch {
     result.* = RangeFetch.init(gpa.allocator(), std.mem.span(orig_url)) catch return null;
 
     return result;
-}
-
-// void range_fetch_addranges(struct range_fetch* rf, off_t* ranges, int nranges);
-pub export fn range_fetch_addranges(rf: ?*range_fetch, ranges: [*c]common.off_t, nranges: c_int) void {
-    const rf_impl = RangeFetch.castFromOpaque(rf) catch unreachable;
-
-    const ranges_count: usize = @intCast(nranges);
-    const input_ranges = ranges[0 .. 2 * ranges_count];
-
-    rf_impl.*.addRanges(input_ranges) catch unreachable;
 }
 
 // int get_range_block(struct range_fetch* rf, off_t* offset, unsigned char* data, size_t dlen, const char *referer);
