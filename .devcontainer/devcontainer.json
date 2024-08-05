@@ -26,6 +26,6 @@
 	// "remoteUser": "root"
 	// "remoteUser": "vscode",
 	// "containerUser": "vscode",
-	"workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
-	"workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/${localWorkspaceFolderBasename},type=bind,Z"
+	// "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
+	// "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/${localWorkspaceFolderBasename},type=bind"
 }
