@@ -176,7 +176,7 @@ pub fn build(b: *std.Build) void {
         },
     });
     zsyncmake.addIncludePath(b.path("./"));
-    zsyncmake.addIncludePath(b.path("stc/zig_headers"));
+    zsyncmake.addIncludePath(b.path("src/zig_headers"));
 
     zsyncmake.addConfigHeader(config);
 

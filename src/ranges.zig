@@ -95,6 +95,7 @@ pub const RangeFetch = struct {
 
     pub fn init(allocator: std.mem.Allocator, url: []const u8) !Self {
         const url_dup = try allocator.dupe(u8, url);
+        errdefer allocator.free(url_dup);
         const uri = try std.Uri.parse(url_dup);
 
         return Self{
@@ -271,20 +272,20 @@ pub const RangeFetch = struct {
         return .{ range_start.?, range_end.? };
     }
 
-    fn fetchMoreRanges(self: *Self) void {
+    fn fetchMoreRanges(self: *Self) !void {
         const ranges_left_to_fetch = self.ranges_todo.items.len - self.current_range;
         const ranges_to_fetch = @min(10, ranges_left_to_fetch);
 
-        const fetched_bytes = self.fetch(self.ranges_todo.items[self.current_range .. self.current_range + ranges_to_fetch]) catch unreachable;
+        const fetched_bytes = try self.fetch(self.ranges_todo.items[self.current_range .. self.current_range + ranges_to_fetch]);
         std.log.debug("Fetched {} bytes \r\n", .{fetched_bytes});
         self.downloaded_bytes += fetched_bytes;
         self.current_range += ranges_to_fetch;
     }
 
-    fn getDataFromBuffer(self: *Self, output_buffer: []u8) struct { usize, usize } {
+    pub fn getDataFromBuffer(self: *Self, output_buffer: []u8) !struct { usize, usize } {
         if (self.buffer.items.len == 0) {
             if (self.current_range < self.ranges_todo.items.len) {
-                self.fetchMoreRanges();
+                try self.fetchMoreRanges();
             } else {
                 return .{ 0, 0 };
             }
@@ -333,19 +334,6 @@ pub export fn range_fetch_start(orig_url: common.ConstCString) ?*range_fetch {
     result.* = RangeFetch.init(gpa.allocator(), std.mem.span(orig_url)) catch return null;
 
     return result;
-}
-
-// int get_range_block(struct range_fetch* rf, off_t* offset, unsigned char* data, size_t dlen, const char *referer);
-pub export fn get_range_block(rf: ?*range_fetch, offset: [*c]common.off_t, data: [*c]u8, dlen: usize, referer: common.ConstCString) c_int {
-    const rf_impl = RangeFetch.castFromOpaque(rf) catch unreachable;
-
-    _ = referer;
-
-    const data_slice = data[0..dlen];
-    const bytes_offset, const bytes_read = rf_impl.*.getDataFromBuffer(data_slice);
-
-    offset.* = @intCast(bytes_offset);
-    return @intCast(bytes_read);
 }
 
 // off_t range_fetch_bytes_down(const struct range_fetch* rf);

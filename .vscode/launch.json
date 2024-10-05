@@ -9,9 +9,19 @@
             "request": "launch",
             "name": "Launch",
             "program": "${workspaceRoot}/zig-out/bin/zsync",
-            "args": ["http://0.0.0.0:8080/Packages.zsync"],
+            "args": ["http://0.0.0.0:8080/Packages.zsync", "-i", "Packages.gz.fake-test"],
             "cwd": "${workspaceRoot}/testing/download"
         },
+
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Launch no args",
+            "program": "${workspaceRoot}/zig-out/bin/zsync",
+            "args": [],
+            "cwd": "${workspaceRoot}/testing/download"
+        },
+
 
         {
             "type": "lldb",

@@ -21,12 +21,12 @@ fn read_zsync_control_file(allocator: std.mem.Allocator, path: [:0]const u8, fil
         unreachable;
     } else |err| {
         std.log.err("{}", .{err});
-        return zsyncReadControlFileHTTP(allocator, path, filename);
+        return zsyncReadControlFileHTTP(allocator, path, filename) catch unreachable;
     }
 }
 
-fn zsyncReadControlFileHTTP(allocator: std.mem.Allocator, path: [:0]const u8, filename: ?[:0]const u8) !struct { *common.c.zsync_state, ?[]u8 } {
-    const file, const referer = http.http_get(allocator, path, filename);
+fn zsyncReadControlFileHTTP(allocator: std.mem.Allocator, path: [:0]const u8, filename: ?[:0]const u8) !struct { *common.c.zsync_state, []u8 } {
+    const file, const referer = try http.http_get(allocator, path, filename);
 
     errdefer allocator.free(referer);
     errdefer _ = common.c.fclose(file);
@@ -124,7 +124,7 @@ fn readSeedFile(allocator: std.mem.Allocator, state: *common.c.struct_zsync_stat
     common.c.zsync_progress(state, &done, &total);
     //     if (!no_progress)
     const percentage = @as(f64, @floatFromInt(done)) * 100.0 / @as(f64, @floatFromInt(total));
-    std.log.debug("Done reading {s}. {}% of target obtained.", .{ filename, percentage });
+    std.log.debug("Done reading {s}. {d:.2}% of target obtained.", .{ filename, percentage });
 }
 
 fn isURLAbsolute(url: []const u8) bool {
@@ -159,7 +159,7 @@ fn makeURLAbsolute(allocator: std.mem.Allocator, url: []const u8, base: ?[]const
     return std.fmt.allocPrint(allocator, "{}", .{resolved});
 }
 
-fn fethgRemainingBlocksHTTP(allocator: std.mem.Allocator, state: *common.c.struct_zsync_state, url: []const u8, utype: c_int) i8 {
+fn fetchRemainingBlocksHTTP(allocator: std.mem.Allocator, state: *common.c.struct_zsync_state, url: []const u8, utype: c_int) i8 {
     var range = ranges.RangeFetch.init(allocator, url) catch {
         return -1;
     };
@@ -189,7 +189,39 @@ fn fethgRemainingBlocksHTTP(allocator: std.mem.Allocator, state: *common.c.struc
         return -1;
     };
 
-    return 1;
+    // Create a read buffer
+    const receive_buffer = allocator.alloc(u8, 8192) catch |err| {
+        std.log.err("Failed to create receive buffer: {}", .{err});
+        return -1;
+    };
+    defer allocator.free(receive_buffer);
+
+    var data_offset: usize = undefined;
+    while (true) {
+        data_offset, const data_length = range.getDataFromBuffer(receive_buffer) catch |err| {
+            std.log.err("Failed to receive data: {}", .{err});
+            return -1;
+        };
+
+        if (data_length == 0) break;
+
+        if (common.c.zsync_receive_data(receiver, receive_buffer.ptr, @intCast(data_offset), data_length) != 0) {
+            return 1;
+        }
+
+        // /* Maintain progress display */
+        // if (!no_progress)
+        // do_progress(p, calc_zsync_progress(z),
+        // range_fetch_bytes_down(rf));
+
+        data_offset += data_length;
+    }
+
+    if (common.c.zsync_receive_data(receiver, null, @intCast(data_offset), 0) != 0) {
+        return 1;
+    }
+
+    return 0;
 }
 
 fn fetchRemainingBlocksFromURL(allocator: std.mem.Allocator, state: *common.c.struct_zsync_state, url: []const u8, referer: ?[]const u8, utype: c_int) i8 {
@@ -207,7 +239,7 @@ fn fetchRemainingBlocksFromURL(allocator: std.mem.Allocator, state: *common.c.st
     defer allocator.free(absolute_url);
 
     // Try fetching data from this URL
-    const rc = fethgRemainingBlocksHTTP(allocator, state, absolute_url, utype);
+    const rc = fetchRemainingBlocksHTTP(allocator, state, absolute_url, utype);
     if (rc != 0) {
         std.log.err("Failed to retrieve data from {s}", .{absolute_url});
     }
@@ -221,7 +253,7 @@ fn fetchRemainingBlocks(allocator: std.mem.Allocator, state: *common.c.struct_zs
     const urls = common.c.zsync_get_urls(state, &n, &utype);
 
     if (urls == null) {
-        std.log.err("No download URLs known!", .{});
+        // std.log.err("No download URLs known!", .{});
         return false;
     }
     var ok_urls = n;
@@ -249,6 +281,35 @@ fn fetchRemainingBlocks(allocator: std.mem.Allocator, state: *common.c.struct_zs
     return true;
 }
 
+fn set_mtime(file_path: []const u8, mtime: i128) !void {
+    const stat = try std.fs.cwd().statFile(file_path);
+
+    const file = try std.fs.cwd().openFile(file_path, .{});
+    defer file.close();
+
+    try file.updateTimes(stat.atime, mtime);
+}
+
+// static int set_mtime(char* filename, time_t mtime) {
+//     struct stat s;
+//     struct utimbuf u;
+
+//     /* Get the access time, which I don't want to modify. */
+//     if (stat(filename, &s) != 0) {
+//         perror("stat");
+//         return -1;
+//     }
+
+//     /* Set the modification time. */
+//     u.actime = s.st_atime;
+//     u.modtime = mtime;
+//     if (utime(filename, &u) != 0) {
+//         perror("utime");
+//         return -1;
+//     }
+//     return 0;
+// }
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -259,6 +320,7 @@ pub fn main() !void {
 
     var zsync_args = app.rootCommand();
     try zsync_args.addArg(Arg.positional("ZSYNC_FILE_URI", null, null));
+    try zsync_args.addArg(Arg.multiValuesOption("input-files", 'i', "input files", 128));
 
     const matches = try app.parseProcess();
 
@@ -288,7 +350,14 @@ pub fn main() !void {
     defer {
         for (seed_files.items) |str| {
             seed_files.allocator.free(str);
-            seed_files.deinit();
+        }
+        seed_files.deinit();
+    }
+
+    if (matches.getMultiValues("input-files")) |input_files| {
+        for (input_files) |input_file| {
+            std.log.debug("Adding seed file from cmdline: {s}", .{input_file});
+            try seed_files.append(try allocator.dupeZ(u8, input_file));
         }
     }
 
@@ -308,10 +377,9 @@ pub fn main() !void {
         try seed_files.append(try allocator.dupeZ(u8, temp_filename));
     } else |_| {}
 
-    // TODO: Add files from arguments
-    // TODO: Skip duplicates
-
+    // TODO: Skip duplicates in seed_files
     for (seed_files.items) |seed_file| {
+        std.log.debug("Processing seed file {s}", .{seed_file});
 
         // Check if target is complete
         if (common.c.zsync_status(state) >= 2) {
@@ -331,7 +399,7 @@ pub fn main() !void {
         , .{});
     }
 
-    // libzsync has been writing to a randomely-named temp file so far -
+    // libzsync has been writing to a randomly-named temp file so far -
     // because we didn't want to overwrite the .part from previous runs. Now
     // we've read any previous .part, we can replace it with our new
     // in-progress run (which should be a superset of the old .part - unless
@@ -361,4 +429,76 @@ pub fn main() !void {
         , .{temp_filename});
         return error.zsync_fetch_failed;
     }
+
+    std.log.debug("Verifying download", .{});
+    switch (common.c.zsync_complete(state)) {
+        -1 => {
+            std.log.err("Aborting, download available in {s}", .{temp_filename});
+            return error.unknown_error;
+        },
+        0 => {
+            std.log.debug("No recognised checksum found", .{});
+        },
+        1 => {
+            std.log.debug("Checksum matches OK", .{});
+        },
+        else => unreachable,
+    }
+
+    // Get any mtime that we is suggested to set for the file, and then shut
+    // down the zsync_state as we are done on the file transfer. Getting the
+    // current name of the file at the same time.
+    const mtime = common.c.zsync_mtime(state);
+    const complete_file = common.c.zsync_end(state);
+    defer common.c.free(complete_file);
+
+    // STEP 5: Move completed .part file into place as the final target
+
+    const old_backup_filename = try std.fmt.allocPrint(allocator, "{s}.zs-old", .{filename});
+    defer allocator.free(old_backup_filename);
+    if (std.fs.cwd().access(filename, .{ .mode = .read_only })) {
+        // Backup the old file.
+        // First, remove any previous backup. We don't care if this fail the link below will catch any failure
+        std.fs.cwd().deleteFile(old_backup_filename) catch {
+            // std.log.debug("{}", err);
+        };
+
+        // Try linking the filename to the backup file name, so we will
+        // atomically replace the target file in the next step.
+        // If that fails due to EPERM, it is probably a filesystem that
+        // doesn't support hard-links - so try just renaming it to the
+        // backup filename.
+
+        // if (link(filename, oldfile_backup) != 0
+        //     && (errno != EPERM || rename(filename, oldfile_backup) != 0)) {
+        //     perror("linkname");
+        //     fprintf(stderr,
+        //             "Unable to back up old file %s - completed download left in %s\n",
+        //             filename, temp_file);
+        //     ok = 0;         /* Prevent overwrite of old file below */
+        // }
+        try std.fs.cwd().rename(filename, old_backup_filename);
+    } else |_| {}
+
+    try std.fs.cwd().rename(std.mem.span(complete_file), filename);
+    if (mtime != -1) {
+        try set_mtime(filename, mtime);
+    }
+
+    // if (ok) {
+    //     /* Rename the file to the desired name */
+    //     if (rename(temp_file, filename) == 0) {
+    //         /* final, final thing - set the mtime on the file if we have one */
+    //         if (mtime != -1) set_mtime(filename, mtime);
+    //     }
+    //     else {
+    //         perror("rename");
+    //         fprintf(stderr,
+    //                 "Unable to back up old file %s - completed download left in %s\n",
+    //                 filename, temp_file);
+    //     }
+    // }
+    // free(oldfile_backup);
+    // free(filename);
+
 }
