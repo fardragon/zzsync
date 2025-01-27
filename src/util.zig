@@ -74,3 +74,12 @@ fn base64_internal(input: []const u8) ![]const u8 {
 
     return encoder.encode(&buffer, input);
 }
+
+pub fn set_mtime(file_path: []const u8, mtime: i128) !void {
+    const stat = try std.fs.cwd().statFile(file_path);
+
+    const file = try std.fs.cwd().openFile(file_path, .{});
+    defer file.close();
+
+    try file.updateTimes(stat.atime, mtime);
+}

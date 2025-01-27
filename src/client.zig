@@ -1,4 +1,5 @@
 const std = @import("std");
+const util = @import("util.zig");
 
 const yazap = @import("yazap");
 const http = @import("http.zig");
@@ -26,9 +27,9 @@ fn read_zsync_control_file(allocator: std.mem.Allocator, path: [:0]const u8, fil
 }
 
 fn zsyncReadControlFileHTTP(allocator: std.mem.Allocator, path: [:0]const u8, filename: ?[:0]const u8) !struct { *common.c.zsync_state, []u8 } {
-    const file, const referer = try http.http_get(allocator, path, filename);
+    const file, const referrer = try http.http_get(allocator, path, filename);
 
-    errdefer allocator.free(referer);
+    errdefer allocator.free(referrer);
     errdefer _ = common.c.fclose(file);
 
     const zs = common.c.zsync_begin(file);
@@ -38,7 +39,7 @@ fn zsyncReadControlFileHTTP(allocator: std.mem.Allocator, path: [:0]const u8, fi
         return error.ZSYNC_PARSE_ERROR;
     }
 
-    return .{ zs.?, referer };
+    return .{ zs.?, referrer };
 }
 
 fn getFilenamePrefix(filename: []const u8) ![]const u8 {
@@ -61,12 +62,12 @@ fn getFilename(allocator: std.mem.Allocator, zstate: *const common.c.zsync_state
         const zstate_filename = std.mem.span(zstate_filename_c.?);
 
         if (std.mem.containsAtLeast(u8, zstate_filename, 1, "/")) {
-            std.log.err("Rejected filename specfied in {s}, contained path component.", .{source_name});
+            std.log.err("Rejected filename specified in {s}, contained path component.", .{source_name});
         } else {
             if (std.mem.eql(u8, zstate_filename[0..prefix.len], prefix)) {
                 return try allocator.dupeZ(u8, zstate_filename);
             } else {
-                std.log.err("Rejected filanme specified in {s} - prefix {s} differed from filename {s}.", .{ source_name, prefix, zstate_filename });
+                std.log.err("Rejected filename specified in {s} - prefix {s} differed from filename {s}.", .{ source_name, prefix, zstate_filename });
             }
         }
     }
@@ -114,7 +115,7 @@ fn readSeedFile(allocator: std.mem.Allocator, state: *common.c.struct_zsync_stat
         defer _ = common.c.fclose(file);
 
         //     if (!no_progress)
-        std.log.debug("Reading seedd file: {s}\r\n", .{filename});
+        std.log.debug("Reading seed file: {s}\r\n", .{filename});
         _ = common.c.zsync_submit_source_file(state, file, 1);
     }
 
@@ -224,10 +225,10 @@ fn fetchRemainingBlocksHTTP(allocator: std.mem.Allocator, state: *common.c.struc
     return 0;
 }
 
-fn fetchRemainingBlocksFromURL(allocator: std.mem.Allocator, state: *common.c.struct_zsync_state, url: []const u8, referer: ?[]const u8, utype: c_int) i8 {
+fn fetchRemainingBlocksFromURL(allocator: std.mem.Allocator, state: *common.c.struct_zsync_state, url: []const u8, referrer: ?[]const u8, utype: c_int) i8 {
 
     // URL might be relative - we need an absolute URL to do a fetch
-    const absolute_url = makeURLAbsolute(allocator, url, referer) catch {
+    const absolute_url = makeURLAbsolute(allocator, url, referrer) catch {
         std.log.err(
             \\URL '{s}' from the .zsync file is relative, but I don't know the referer URL (you probably downloaded the .zsync separately and gave it to me as a file).
             \\I need to know the referring URL (the URL of the .zsync) in order to locate the download.
@@ -246,7 +247,7 @@ fn fetchRemainingBlocksFromURL(allocator: std.mem.Allocator, state: *common.c.st
     return rc;
 }
 
-fn fetchRemainingBlocks(allocator: std.mem.Allocator, state: *common.c.struct_zsync_state, referer: ?[]const u8) bool {
+fn fetchRemainingBlocks(allocator: std.mem.Allocator, state: *common.c.struct_zsync_state, referrer: ?[]const u8) bool {
     var n: c_int = undefined;
     var utype: c_int = undefined;
 
@@ -270,7 +271,7 @@ fn fetchRemainingBlocks(allocator: std.mem.Allocator, state: *common.c.struct_zs
             if (!statuses.items[i]) continue;
 
             const url = std.mem.span(urls[i]);
-            const rc = fetchRemainingBlocksFromURL(allocator, state, url, referer, utype);
+            const rc = fetchRemainingBlocksFromURL(allocator, state, url, referrer, utype);
             if (rc != 0) {
                 statuses.items[i] = false;
                 ok_urls -= 1;
@@ -281,34 +282,7 @@ fn fetchRemainingBlocks(allocator: std.mem.Allocator, state: *common.c.struct_zs
     return true;
 }
 
-fn set_mtime(file_path: []const u8, mtime: i128) !void {
-    const stat = try std.fs.cwd().statFile(file_path);
-
-    const file = try std.fs.cwd().openFile(file_path, .{});
-    defer file.close();
-
-    try file.updateTimes(stat.atime, mtime);
-}
-
-// static int set_mtime(char* filename, time_t mtime) {
-//     struct stat s;
-//     struct utimbuf u;
-
-//     /* Get the access time, which I don't want to modify. */
-//     if (stat(filename, &s) != 0) {
-//         perror("stat");
-//         return -1;
-//     }
-
-//     /* Set the modification time. */
-//     u.actime = s.st_atime;
-//     u.modtime = mtime;
-//     if (utime(filename, &u) != 0) {
-//         perror("utime");
-//         return -1;
-//     }
-//     return 0;
-// }
+const file_uri_arg: []const u8 = "ZSYNC_FILE_URI";
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -319,7 +293,7 @@ pub fn main() !void {
     defer app.deinit();
 
     var zsync_args = app.rootCommand();
-    try zsync_args.addArg(Arg.positional("ZSYNC_FILE_URI", null, null));
+    try zsync_args.addArg(Arg.positional(file_uri_arg, null, null));
     try zsync_args.addArg(Arg.multiValuesOption("input-files", 'i', "input files", 128));
 
     const matches = try app.parseProcess();
@@ -330,16 +304,16 @@ pub fn main() !void {
     }
 
     // STEP 1: Read the zsync control file
-    const uri = try allocator.dupeZ(u8, matches.getSingleValue("ZSYNC_FILE_URI").?);
+    const uri = try allocator.dupeZ(u8, matches.getSingleValue(file_uri_arg).?);
     defer allocator.free(uri);
-    const state, const maybe_referer = try read_zsync_control_file(allocator, uri, null);
+    const state, const maybe_referrer = try read_zsync_control_file(allocator, uri, null);
     defer {
-        if (maybe_referer) |referer| {
-            allocator.free(referer);
+        if (maybe_referrer) |referrer| {
+            allocator.free(referrer);
         }
     }
 
-    const filename = try getFilename(allocator, state, matches.getSingleValue("ZSYNC_FILE_URI").?);
+    const filename = try getFilename(allocator, state, matches.getSingleValue(file_uri_arg).?);
     defer allocator.free(filename);
 
     const temp_filename = try std.fmt.allocPrintZ(allocator, "{s}.part", .{filename});
@@ -393,7 +367,7 @@ pub fn main() !void {
     if (local_used == 0) {
         // if (!no_progress)
         std.log.info(
-            \\ No relevent local data found - I will be downloading the whole file. If that's not what you want, CTRL-C out.
+            \\ No relevant local data found - I will be downloading the whole file. If that's not what you want, CTRL-C out.
             \\ You should specify the local file is the old version of the file to download with -i (you might have to decompress it with gzip -d first).
             \\ Or perhaps you just have no data that helps download the file,
         , .{});
@@ -411,7 +385,7 @@ pub fn main() !void {
 
     // STEP 3: fetch remaining blocks via the URLs from the .zsync
 
-    const fetch_status = fetchRemainingBlocks(allocator, state, maybe_referer);
+    const fetch_status = fetchRemainingBlocks(allocator, state, maybe_referrer);
     const target_status = common.c.zsync_status(state);
     if (target_status < 2) {
         if (!fetch_status) {
@@ -437,7 +411,7 @@ pub fn main() !void {
             return error.unknown_error;
         },
         0 => {
-            std.log.debug("No recognised checksum found", .{});
+            std.log.debug("No recognized checksum found", .{});
         },
         1 => {
             std.log.debug("Checksum matches OK", .{});
@@ -482,7 +456,7 @@ pub fn main() !void {
 
     try std.fs.cwd().rename(std.mem.span(complete_file), filename);
     if (mtime != -1) {
-        try set_mtime(filename, mtime);
+        try util.set_mtime(filename, mtime);
     }
 
     // if (ok) {

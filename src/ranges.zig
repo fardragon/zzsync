@@ -73,9 +73,6 @@ const RangeFetchResult = struct {
     }
 };
 
-const range_fetch = anyopaque;
-
-// struct range_fetch;
 pub const RangeFetch = struct {
     const Self = @This();
     allocator: std.mem.Allocator,
@@ -317,40 +314,7 @@ pub const RangeFetch = struct {
             });
         }
     }
-
-    fn castFromOpaque(rf: ?*range_fetch) !*Self {
-        if (rf == null) return error.Nullptr;
-        return @alignCast(@ptrCast(rf));
-    }
 };
-
-// struct range_fetch* range_fetch_start(const char* orig_url);
-pub export fn range_fetch_start(orig_url: common.ConstCString) ?*range_fetch {
-    const result = gpa.allocator().create(RangeFetch) catch return null;
-    errdefer {
-        gpa.allocator().destroy(result);
-    }
-
-    result.* = RangeFetch.init(gpa.allocator(), std.mem.span(orig_url)) catch return null;
-
-    return result;
-}
-
-// off_t range_fetch_bytes_down(const struct range_fetch* rf);
-pub export fn range_fetch_bytes_down(rf: ?*const range_fetch) common.off_t {
-    const rf_impl = RangeFetch.castFromOpaque(@constCast(rf)) catch unreachable;
-
-    return @intCast(rf_impl.*.downloaded_bytes);
-}
-
-// void range_fetch_end(struct range_fetch* rf);
-pub export fn range_fetch_end(rf: ?*range_fetch) void {
-    const rf_impl = RangeFetch.castFromOpaque(rf) catch unreachable;
-
-    rf_impl.*.deinit();
-    gpa.allocator().destroy(rf_impl);
-    // _ = gpa.deinit();
-}
 
 test "Test RangeFetch.buildRangeHeader single range" {
     var test_buffer: [1024]u8 = undefined;
