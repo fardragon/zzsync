@@ -1,8 +1,9 @@
 const std = @import("std");
 const common = @import("common.zig");
+const c = common.c;
 
 // FILE* http_get(const char* orig_url, char** track_referer, const char* tfname);
-pub fn http_get(allocator: std.mem.Allocator, orig_url: [:0]const u8, tfname: ?[]const u8) !struct { [*c]common.c.FILE, []u8 } {
+pub fn http_get(allocator: std.mem.Allocator, orig_url: [:0]const u8, tfname: ?[]const u8) !struct { ?*c.FILE, []u8 } {
     // TODO: Allow using local .zsync file
     // TODO: Add proxy handling
     // TODO: Add auth handling
